@@ -32,6 +32,10 @@ import {
   LINEA_MAINNET_DISPLAY_NAME,
   LINEA_MAINNET_TOKEN_IMAGE_URL,
   CHAIN_ID_TO_NETWORK_IMAGE_URL_MAP,
+  ARBITRUM_DISPLAY_NAME,
+  OPTIMISM_DISPLAY_NAME,
+  BASE_DISPLAY_NAME,
+  ZK_SYNC_ERA_DISPLAY_NAME,
   CHAIN_ID_TOKEN_IMAGE_MAP,
 } from '../../shared/constants/network';
 import {
@@ -40,7 +44,6 @@ import {
   HardwareTransportStates,
 } from '../../shared/constants/hardware-wallets';
 import { KeyringType } from '../../shared/constants/keyring';
-import { MESSAGE_TYPE } from '../../shared/constants/app';
 
 import { TRUNCATED_NAME_CHAR_LIMIT } from '../../shared/constants/labels';
 
@@ -61,7 +64,7 @@ import {
   ///: END:ONLY_INCLUDE_IF
 } from '../helpers/utils/util';
 
-import { TEMPLATED_CONFIRMATION_APPROVAL_TYPES } from '../pages/confirmation/templates';
+import { TEMPLATED_CONFIRMATION_APPROVAL_TYPES } from '../pages/confirmations/confirmation/templates';
 import { STATIC_MAINNET_TOKEN_LIST } from '../../shared/constants/tokens';
 import { DAY } from '../../shared/constants/time';
 import { TERMS_OF_USE_LAST_UPDATED } from '../../shared/constants/terms';
@@ -72,9 +75,6 @@ import {
   isEIP1559Network,
   getLedgerTransportType,
   isAddressLedger,
-  ///: BEGIN:ONLY_INCLUDE_IF(keyring-snaps)
-  findKeyringForAddress,
-  ///: END:ONLY_INCLUDE_IF
 } from '../ducks/metamask/metamask';
 import {
   getLedgerWebHidConnectedStatus,
@@ -87,9 +87,13 @@ import {
 } from '../../shared/modules/conversion.utils';
 import { BackgroundColor } from '../helpers/constants/design-system';
 import {
+  ///: BEGIN:ONLY_INCLUDE_IF(blockaid)
+  NOTIFICATION_BLOCKAID_DEFAULT,
+  ///: END:ONLY_INCLUDE_IF
   NOTIFICATION_BUY_SELL_BUTTON,
   NOTIFICATION_DROP_LEDGER_FIREFOX,
   NOTIFICATION_OPEN_BETA_SNAPS,
+  NOTIFICATION_PETNAMES,
   NOTIFICATION_U2F_LEDGER_LIVE,
 } from '../../shared/notifications';
 import {
@@ -158,47 +162,8 @@ export function getCurrentQRHardwareState(state) {
   return qrHardware || {};
 }
 
-export function hasUnsignedQRHardwareTransaction(state) {
-  const { txParams } = state.confirmTransaction.txData;
-  if (!txParams) {
-    return false;
-  }
-  const { from } = txParams;
-  const { keyrings } = state.metamask;
-  const qrKeyring = keyrings.find((kr) => kr.type === KeyringType.qr);
-  if (!qrKeyring) {
-    return false;
-  }
-  return Boolean(
-    qrKeyring.accounts.find(
-      (account) => account.toLowerCase() === from.toLowerCase(),
-    ),
-  );
-}
-
-export function hasUnsignedQRHardwareMessage(state) {
-  const { type, msgParams } = state.confirmTransaction.txData;
-  if (!type || !msgParams) {
-    return false;
-  }
-  const { from } = msgParams;
-  const { keyrings } = state.metamask;
-  const qrKeyring = keyrings.find((kr) => kr.type === KeyringType.qr);
-  if (!qrKeyring) {
-    return false;
-  }
-  switch (type) {
-    case MESSAGE_TYPE.ETH_SIGN_TYPED_DATA:
-    case MESSAGE_TYPE.ETH_SIGN:
-    case MESSAGE_TYPE.PERSONAL_SIGN:
-      return Boolean(
-        qrKeyring.accounts.find(
-          (account) => account.toLowerCase() === from.toLowerCase(),
-        ),
-      );
-    default:
-      return false;
-  }
+export function getIsSigningQRHardwareTransaction(state) {
+  return state.metamask.qrHardware?.sign?.request !== undefined;
 }
 
 export function getCurrentKeyring(state) {
@@ -242,6 +207,18 @@ export function checkNetworkOrAccountNotSupports1559(state) {
 export function isHardwareWallet(state) {
   const keyring = getCurrentKeyring(state);
   return Boolean(keyring?.type?.includes('Hardware'));
+}
+
+/**
+ * Checks if the account supports smart transactions.
+ *
+ * @param {object} state - The state object.
+ * @returns {boolean}
+ */
+export function accountSupportsSmartTx(state) {
+  const accountType = getAccountType(state);
+
+  return Boolean(accountType !== 'hardware' && accountType !== 'snap');
 }
 
 /**
@@ -335,9 +312,20 @@ export function getSelectedIdentity(state) {
   return identities[selectedAddress];
 }
 
+export function getInternalAccountByAddress(state, address) {
+  return Object.values(state.metamask.internalAccounts.accounts).find(
+    (account) => isEqualCaseInsensitive(account.address, address),
+  );
+}
+
 export function getSelectedInternalAccount(state) {
   const accountId = state.metamask.internalAccounts.selectedAccount;
   return state.metamask.internalAccounts.accounts[accountId];
+}
+
+export function checkIfMethodIsEnabled(state, methodName) {
+  const internalAccount = getSelectedInternalAccount(state);
+  return Boolean(internalAccount.methods.includes(methodName));
 }
 
 export function getSelectedInternalAccountWithBalance(state) {
@@ -346,7 +334,7 @@ export function getSelectedInternalAccountWithBalance(state) {
 
   const selectedAccountWithBalance = {
     ...selectedAccount,
-    balance: rawAccount ? rawAccount.balance : 0,
+    balance: rawAccount ? rawAccount.balance : '0x0',
   };
 
   return selectedAccountWithBalance;
@@ -428,11 +416,22 @@ export const getMetaMaskAccountsOrdered = createSelector(
   getMetaMaskKeyrings,
   getMetaMaskIdentities,
   getMetaMaskAccounts,
-  (keyrings, identities, accounts) =>
+  getInternalAccounts,
+  (keyrings, identities, accounts, internalAccounts) =>
     keyrings
       .reduce((list, keyring) => list.concat(keyring.accounts), [])
       .filter((address) => Boolean(identities[address]))
-      .map((address) => ({ ...identities[address], ...accounts[address] })),
+      .map((address) => {
+        const internalAccount = internalAccounts.find((account) =>
+          isEqualCaseInsensitive(account.address, address),
+        );
+
+        return {
+          ...identities[address],
+          ...internalAccount,
+          ...accounts[address],
+        };
+      }),
 );
 
 export const getMetaMaskAccountsConnected = createSelector(
@@ -442,8 +441,9 @@ export const getMetaMaskAccountsConnected = createSelector(
 );
 
 export function isBalanceCached(state) {
+  const { address: selectedAddress } = getSelectedInternalAccount(state);
   const selectedAccountBalance =
-    getMetaMaskAccountBalances(state)[getSelectedAddress(state)]?.balance;
+    getMetaMaskAccountBalances(state)[selectedAddress]?.balance;
   const cachedBalance = getSelectedAccountCachedBalance(state);
 
   return Boolean(!selectedAccountBalance && cachedBalance);
@@ -459,6 +459,10 @@ export function getSelectedAccountCachedBalance(state) {
 export function getAllTokens(state) {
   return state.metamask.allTokens;
 }
+
+export const getConfirmationExchangeRates = (state) => {
+  return state.metamask.confirmationExchangeRates;
+};
 
 export function getSelectedAccount(state) {
   const accounts = getMetaMaskAccounts(state);
@@ -493,9 +497,7 @@ export function getEnsResolutionByAddress(state, address) {
 
   const entry =
     getAddressBookEntry(state, address) ||
-    Object.values(state.metamask.identities).find((identity) =>
-      isEqualCaseInsensitive(identity.address, address),
-    );
+    getInternalAccountByAddress(state, address);
 
   return entry?.name || '';
 }
@@ -521,11 +523,11 @@ export function getAddressBookEntryOrAccountName(state, address) {
   return internalAccount?.metadata.name || address;
 }
 
-export function getAccountName(identities, address) {
-  const entry = Object.values(identities).find((identity) =>
-    isEqualCaseInsensitive(identity.address, address),
+export function getAccountName(accounts, accountAddress) {
+  const account = accounts.find((internalAccount) =>
+    isEqualCaseInsensitive(internalAccount.address, accountAddress),
   );
-  return entry && entry.name !== '' ? entry.name : '';
+  return account && account.metadata.name !== '' ? account.metadata.name : '';
 }
 
 export function getMetadataContractName(state, address) {
@@ -551,7 +553,7 @@ export function accountsWithSendEtherInfoSelector(state) {
 
 export function getAccountsWithLabels(state) {
   return getMetaMaskAccountsOrdered(state).map(
-    ({ address, name, balance }) => ({
+    ({ address, balance, metadata: { name } }) => ({
       address,
       addressLabel: `${
         name.length < TRUNCATED_NAME_CHAR_LIMIT
@@ -565,7 +567,7 @@ export function getAccountsWithLabels(state) {
 }
 
 export function getCurrentAccountWithSendEtherInfo(state) {
-  const currentAddress = getSelectedAddress(state);
+  const { address: currentAddress } = getSelectedInternalAccount(state);
   const accounts = accountsWithSendEtherInfoSelector(state);
 
   return getAccountByAddress(accounts, currentAddress);
@@ -693,6 +695,16 @@ export function getPreferences({ metamask }) {
 export function getShowTestNetworks(state) {
   const { showTestNetworks } = getPreferences(state);
   return Boolean(showTestNetworks);
+}
+
+export function getPetnamesEnabled(state) {
+  const { petnamesEnabled = true } = getPreferences(state);
+  return petnamesEnabled;
+}
+
+export function getShowExtensionInFullSizeView(state) {
+  const { showExtensionInFullSizeView } = getPreferences(state);
+  return Boolean(showExtensionInFullSizeView);
 }
 
 export function getTestNetworkBackgroundColor(state) {
@@ -1015,6 +1027,11 @@ export const getMemoizedMetaMaskIdentities = createDeepEqualSelector(
   (identities) => identities,
 );
 
+export const getMemoizedMetaMaskInternalAccounts = createDeepEqualSelector(
+  getInternalAccounts,
+  (internalAccounts) => internalAccounts,
+);
+
 export const getMemoizedAddressBook = createDeepEqualSelector(
   getAddressBook,
   (addressBook) => addressBook,
@@ -1085,6 +1102,31 @@ export const getAllConnectedAccounts = createDeepEqualSelector(
   (connectedSubjects) => {
     return Object.keys(connectedSubjects);
   },
+);
+
+export const getMemoizedCurrentChainId = createDeepEqualSelector(
+  getCurrentChainId,
+  (chainId) => chainId,
+);
+
+export const getMemoizedTxId = createDeepEqualSelector(
+  (state) => state.appState.txId,
+  (txId) => txId,
+);
+
+export const getMemoizedUnapprovedMessages = createDeepEqualSelector(
+  (state) => state.metamask.unapprovedMsgs,
+  (unapprovedMsgs) => unapprovedMsgs,
+);
+
+export const getMemoizedUnapprovedPersonalMessages = createDeepEqualSelector(
+  (state) => state.metamask.unapprovedPersonalMsgs,
+  (unapprovedPersonalMsgs) => unapprovedPersonalMsgs,
+);
+
+export const getMemoizedUnapprovedTypedMessages = createDeepEqualSelector(
+  (state) => state.metamask.unapprovedTypedMessages,
+  (unapprovedTypedMessages) => unapprovedTypedMessages,
 );
 
 ///: BEGIN:ONLY_INCLUDE_IF(snaps)
@@ -1227,7 +1269,7 @@ function getAllowedAnnouncementIds(state) {
     21: false,
     22: false,
     ///: BEGIN:ONLY_INCLUDE_IF(blockaid)
-    23: true,
+    23: false,
     ///: END:ONLY_INCLUDE_IF
     24: state.metamask.hadAdvancedGasFeesSetPriorToMigration92_3 === true,
     // This syntax is unusual, but very helpful here.  It's equivalent to `unnamedObject[NOTIFICATION_DROP_LEDGER_FIREFOX] =`
@@ -1235,6 +1277,10 @@ function getAllowedAnnouncementIds(state) {
     [NOTIFICATION_OPEN_BETA_SNAPS]: true,
     [NOTIFICATION_BUY_SELL_BUTTON]: true,
     [NOTIFICATION_U2F_LEDGER_LIVE]: currentKeyringIsLedger && !isFirefox,
+    ///: BEGIN:ONLY_INCLUDE_IF(blockaid)
+    [NOTIFICATION_BLOCKAID_DEFAULT]: true,
+    ///: END:ONLY_INCLUDE_IF
+    [NOTIFICATION_PETNAMES]: true,
   };
 }
 
@@ -1275,6 +1321,10 @@ export function getOrderedNetworksList(state) {
 
 export function getPinnedAccountsList(state) {
   return state.metamask.pinnedAccountList;
+}
+
+export function getHiddenAccountsList(state) {
+  return state.metamask.hiddenAccountList;
 }
 
 export function getShowRecoveryPhraseReminder(state) {
@@ -1324,6 +1374,14 @@ export function getShowBetaHeader(state) {
 
 export function getShowProductTour(state) {
   return state.metamask.showProductTour;
+}
+
+export function getShowNetworkBanner(state) {
+  return state.metamask.showNetworkBanner;
+}
+
+export function getShowAccountBanner(state) {
+  return state.metamask.showAccountBanner;
 }
 /**
  * To get the useTokenDetection flag which determines whether a static or dynamic token list is used
@@ -1628,13 +1686,22 @@ export const getTokenDetectionSupportNetworkByChainId = (state) => {
       return LINEA_GOERLI_DISPLAY_NAME;
     case CHAIN_IDS.LINEA_MAINNET:
       return LINEA_MAINNET_DISPLAY_NAME;
+    case CHAIN_IDS.ARBITRUM:
+      return ARBITRUM_DISPLAY_NAME;
+    case CHAIN_IDS.OPTIMISM:
+      return OPTIMISM_DISPLAY_NAME;
+    case CHAIN_IDS.BASE:
+      return BASE_DISPLAY_NAME;
+    case CHAIN_IDS.ZKSYNC_ERA:
+      return ZK_SYNC_ERA_DISPLAY_NAME;
     default:
       return '';
   }
 };
 /**
  * To check if the chainId supports token detection,
- * currently it returns true for Ethereum Mainnet, BSC, Polygon, Avalanche, and Linea
+ * currently it returns true for Ethereum Mainnet, BSC, Polygon,
+ * Avalanche, Linea, Arbitrum, Optimism, Base, and zkSync
  *
  * @param {*} state
  * @returns Boolean
@@ -1648,6 +1715,10 @@ export function getIsDynamicTokenListAvailable(state) {
     CHAIN_IDS.AVALANCHE,
     CHAIN_IDS.LINEA_GOERLI,
     CHAIN_IDS.LINEA_MAINNET,
+    CHAIN_IDS.ARBITRUM,
+    CHAIN_IDS.OPTIMISM,
+    CHAIN_IDS.BASE,
+    CHAIN_IDS.ZKSYNC_ERA,
   ].includes(chainId);
 }
 
@@ -1659,7 +1730,7 @@ export function getIsDynamicTokenListAvailable(state) {
  */
 export function getDetectedTokensInCurrentNetwork(state) {
   const currentChainId = getCurrentChainId(state);
-  const selectedAddress = getSelectedAddress(state);
+  const { address: selectedAddress } = getSelectedInternalAccount(state);
   return state.metamask.allDetectedTokens?.[currentChainId]?.[selectedAddress];
 }
 
@@ -1825,7 +1896,12 @@ export function getAllAccountsOnNetworkAreEmpty(state) {
 export function getShouldShowSeedPhraseReminder(state) {
   const { tokens, seedPhraseBackedUp, dismissSeedBackUpReminder } =
     state.metamask;
-  const accountBalance = getCurrentEthBalance(state) ?? 0;
+
+  // if there is no account, we don't need to show the seed phrase reminder
+  const accountBalance = getSelectedInternalAccount(state)
+    ? getCurrentEthBalance(state)
+    : 0;
+
   return (
     seedPhraseBackedUp === false &&
     (parseInt(accountBalance, 16) > 0 || tokens.length > 0) &&
@@ -1840,22 +1916,38 @@ export function getCustomTokenAmount(state) {
 export function getUpdatedAndSortedAccounts(state) {
   const accounts = getMetaMaskAccountsOrdered(state);
   const pinnedAddresses = getPinnedAccountsList(state);
+  const hiddenAddresses = getHiddenAccountsList(state);
 
   accounts.forEach((account) => {
-    account.pinned = Boolean(pinnedAddresses?.includes(account.address));
+    account.pinned = Boolean(pinnedAddresses.includes(account.address));
+    account.hidden = Boolean(hiddenAddresses.includes(account.address));
   });
 
-  const notPinnedAccounts = accounts.filter(
-    (account) => !pinnedAddresses.includes(account.address),
-  );
-
   const sortedPinnedAccounts = pinnedAddresses
-    .map((address) => accounts.find((account) => account.address === address))
+    ?.map((address) => accounts.find((account) => account.address === address))
     .filter((account) =>
-      Boolean(account && pinnedAddresses.includes(account.address)),
+      Boolean(
+        account &&
+          pinnedAddresses.includes(account.address) &&
+          !hiddenAddresses?.includes(account.address),
+      ),
     );
 
-  const sortedSearchResults = [...sortedPinnedAccounts, ...notPinnedAccounts];
+  const notPinnedAccounts = accounts.filter(
+    (account) =>
+      !pinnedAddresses.includes(account.address) &&
+      !hiddenAddresses.includes(account.address),
+  );
+
+  const filteredHiddenAccounts = accounts.filter((account) =>
+    hiddenAddresses.includes(account.address),
+  );
+
+  const sortedSearchResults = [
+    ...sortedPinnedAccounts,
+    ...notPinnedAccounts,
+    ...filteredHiddenAccounts,
+  ];
 
   return sortedSearchResults;
 }
@@ -1956,13 +2048,14 @@ export function getSnapRegistry(state) {
 }
 
 export function getKeyringSnapAccounts(state) {
-  const identities = getMetaMaskIdentities(state);
+  const internalAccounts = getInternalAccounts(state);
 
-  const keyringAccounts = Object.values(identities).filter((identity) => {
-    return (
-      findKeyringForAddress(state, identity.address).type === 'Snap Keyring'
-    );
-  });
+  const keyringAccounts = Object.values(internalAccounts).filter(
+    (internalAccount) => {
+      const { keyring } = internalAccount.metadata;
+      return keyring.type === KeyringType.snap;
+    },
+  );
   return keyringAccounts;
 }
 

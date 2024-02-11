@@ -49,16 +49,19 @@ export enum BlockaidReason {
   // MetaMask defined reasons
   failed = 'Failed',
   notApplicable = 'NotApplicable',
+  inProgress = 'validation_in_progress',
 }
 
 export enum BlockaidResultType {
   Malicious = 'Malicious',
   Warning = 'Warning',
   Benign = 'Benign',
+  Errored = 'Error',
 
   // MetaMask defined result types
   Failed = 'Failed',
   NotApplicable = 'NotApplicable',
+  Loading = 'loading',
 }
 
 /**
@@ -75,5 +78,6 @@ export const SECURITY_PROVIDER_MESSAGE_SEVERITY = {
   NOT_SAFE: 2,
 };
 
-export const FALSE_POSITIVE_REPORT_BASE_URL = 'https://report.blockaid.io/tx';
-export const UTM_SOURCE = 'metamask-ppom';
+export const FALSE_POSITIVE_REPORT_BASE_URL =
+  'https://blockaid-false-positive-portal.metamask.io';
+export const SECURITY_PROVIDER_UTM_SOURCE = 'metamask-ppom';
