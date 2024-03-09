@@ -18,6 +18,7 @@ import {
   ///: END:ONLY_INCLUDE_IF
   getSelectedAccount,
   getPreferences,
+  getIsMainnet,
 } from '../../../selectors';
 import {
   getNativeCurrency,
@@ -65,6 +66,7 @@ const AssetList = ({ onClickAsset }) => {
   const showFiat = useSelector(getShouldShowFiat);
   const currentNetwork = useSelector(getCurrentNetwork);
   const currentLocale = useSelector(getCurrentLocale);
+  const isMainnet = useSelector(getIsMainnet);
   const { useNativeCurrencyAsPrimaryCurrency } = useSelector(getPreferences);
   const { ticker, type } = useSelector(getProviderConfig);
   const isOriginalNativeSymbol = useIsOriginalNativeTokenSymbol(
@@ -91,13 +93,11 @@ const AssetList = ({ onClickAsset }) => {
     numberOfDecimals: secondaryNumberOfDecimals,
   } = useUserPreferencedCurrency(SECONDARY, { ethNumberOfDecimals: 4 });
 
-  const [, primaryCurrencyProperties] = useCurrencyDisplay(
-    selectedAccountBalance,
-    {
+  const [primaryCurrencyDisplay, primaryCurrencyProperties] =
+    useCurrencyDisplay(selectedAccountBalance, {
       numberOfDecimals: primaryNumberOfDecimals,
       currency: primaryCurrency,
-    },
-  );
+    });
 
   const [secondaryCurrencyDisplay, secondaryCurrencyProperties] =
     useCurrencyDisplay(selectedAccountBalance, {
@@ -159,6 +159,12 @@ const AssetList = ({ onClickAsset }) => {
     currentLocale,
   ]);
 
+  let isStakeable = isMainnet;
+
+  ///: BEGIN:ONLY_INCLUDE_IF(build-mmi)
+  isStakeable = false;
+  ///: END:ONLY_INCLUDE_IF
+
   return (
     <>
       {detectedTokens.length > 0 &&
@@ -218,25 +224,9 @@ const AssetList = ({ onClickAsset }) => {
       <TokenListItem
         onClick={() => onClickAsset(nativeCurrency)}
         title={nativeCurrency}
+        // The primary and secondary currencies are subject to change based on the user's settings
+        // TODO: rename this primary/secondary concept here to be more intuitive, regardless of setting
         primary={
-          showPrimaryCurrency(
-            isOriginalNativeSymbol,
-            useNativeCurrencyAsPrimaryCurrency,
-          )
-            ? primaryCurrencyProperties.value ??
-              secondaryCurrencyProperties.value
-            : null
-        }
-        tokenSymbol={
-          showPrimaryCurrency(
-            isOriginalNativeSymbol,
-            useNativeCurrencyAsPrimaryCurrency,
-          )
-            ? primaryCurrencyProperties.suffix
-            : null
-        }
-        secondary={
-          showFiat &&
           showSecondaryCurrency(
             isOriginalNativeSymbol,
             useNativeCurrencyAsPrimaryCurrency,
@@ -244,9 +234,24 @@ const AssetList = ({ onClickAsset }) => {
             ? secondaryCurrencyDisplay
             : undefined
         }
+        tokenSymbol={
+          useNativeCurrencyAsPrimaryCurrency
+            ? primaryCurrencyProperties.suffix
+            : secondaryCurrencyProperties.suffix
+        }
+        secondary={
+          showFiat &&
+          showPrimaryCurrency(
+            isOriginalNativeSymbol,
+            useNativeCurrencyAsPrimaryCurrency,
+          )
+            ? primaryCurrencyDisplay
+            : undefined
+        }
         tokenImage={balanceIsLoading ? null : primaryTokenImage}
         isOriginalTokenSymbol={isOriginalNativeSymbol}
         isNativeCurrency
+        isStakeable={isStakeable}
       />
       <TokenList
         tokens={tokensWithBalances}
